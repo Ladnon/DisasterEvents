@@ -1,0 +1,194 @@
+---
+title: "An examination of the cost to health and property of natural disasters"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 7, digits = 2)
+ 
+```
+
+##Synopsis:
+In the following data cleaning operation I have downloaded the data, extracted the relevant columns to the questions at hand, removed the entries before 1995(to ensure the best data entries). I then grouped the relevant columns, corrected columns to show the actual values, calculated the means, standard deviation and absolute sums of the event types and arranged them to see which type of events were highest in terms of means and sums. My conclusions can be found in the "Results" section.
+
+##Importing the data and preparing data
+
+First we load the relevant libraries:
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+Here is some basic information about the system used for the analysis:
+```{r}
+sessionInfo()
+```
+
+Then we create check if the relevant folder structure and files are downloaded, if not they will be:
+```{r cache=TRUE}
+dataPath <- paste(getwd(), "/data/rawStormData.csv.bz2", sep = "")
+if(!dir.exists("data")){
+        dir.create("data")
+        if(!file.exists(dataPath)){
+                download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", dataPath, method="curl")
+        }
+}else{
+        if(!file.exists(dataPath)){
+                 download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", dataPath, method="curl")
+        }
+}
+```
+
+
+We convert the data into a dplyr compatible data frame:
+```{r cache=TRUE}
+stormData <- tbl_df(read.csv(dataPath))
+head(stormData)
+```
+
+Converting factors to date objects and filter out all entries earlier than 1995, the cutoff point is somewhat arbitrary here but it is done because we are told that the data is less reliable for earlier entries.
+```{r cache=TRUE}
+stormData$BGN_DATE <- as.POSIXct(stormData$BGN_DATE, format = "%m/%d/%Y %H:%M:%S")
+stormData <- stormData %>%
+        filter(BGN_DATE > "1995-01-01")
+```
+
+##Health related cost
+First we select the relevant columns, the type of event, fatalities and injuries. I have choosen to equate fatalities with injuries, it may be more realistic to weight the two varables differently (e.g. one death may equal 5 injuries) but since this is not specified, I have simply created one category(healthcost) which is the sum of injuries and fatalities for each event.
+```{r cache=TRUE}
+healthData <-  
+        select(stormData, FATALITIES, INJURIES, EVTYPE) %>%
+        mutate(healthcost = FATALITIES + (INJURIES)) 
+
+```
+
+We then arrange the data by event and produce the average, sd and mean for the data. We then take the top 15 events, based on the number of absolute deaths/injuries.
+```{r}
+healthCostMean <- 
+        healthData %>%
+        group_by(EVTYPE) %>%
+        summarise(average = mean(healthcost),
+                  sd = sd(healthcost, na.rm=TRUE),
+                  sum = sum(healthcost)) %>%
+        arrange(desc(sum))
+healthCostMean <- healthCostMean[1:15,]
+
+        
+
+```
+ 
+Here we produce the relevant plot for the presentation part.
+```{r}
+healthPlot <-  qplot(average, sd, size = sum, color = EVTYPE, data = healthCostMean,
+                       main = "Distribution of harmful events",
+                       xlab = "Mean",
+                       ylab = "Standard Deviation"
+                       )
+```
+
+##Economic cost
+First we select the relevant columns, the type of event, property and crop damage.
+```{r cache=TRUE}
+damageData <-  
+        stormData %>%
+        select(PROPDMG,PROPDMGEXP, CROPDMG, CROPDMGEXP, EVTYPE) %>%
+        group_by(EVTYPE)
+```
+
+We then write a function designed to assign the correct value so that we can multiply up the correct damage cost by taking the "K", "M" or "B" and assigning a numeric value. This is then applied to the PROPDMGEXP and CROPDMGEXP.
+```{r cache = TRUE}
+letterAdjuster <- function(x){
+        if(x == "K"){
+                x <- 1000
+        }
+        if(x=="M"){
+                x <- 1000000
+                
+        }
+        if(x=="B"){
+                x <- 1000000000
+        }
+        else{
+                x <- 1
+        }
+}
+damageData$PROPDMGEXP <- sapply(damageData$PROPDMGEXP, letterAdjuster)
+damageData$CROPDMGEXP <- sapply(damageData$CROPDMGEXP, letterAdjuster)
+
+```
+
+We then subset create a new column called damageValue which adds the property damage to the cropdamage, we calculate the mean, standard deviation and absolut sum of the cost. We then arrange these in the absolute cost per event type and extract the top 15 entries.
+```{r cache=TRUE}
+unifiedDamage <- 
+        damageData %>%
+        select(EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG,CROPDMGEXP) %>%
+        mutate(damageValue = (PROPDMGEXP*PROPDMG) + (CROPDMGEXP*CROPDMG)) %>%
+        group_by(EVTYPE) %>%
+        summarise(damageMean = mean(damageValue),
+                  damageSD = sd(damageValue),
+                  damageSum = sum(damageValue)) %>%
+        arrange(desc(damageSum))
+unifiedDamage <- unifiedDamage[1:15,]
+
+        
+
+```
+
+Here we produce the relevant plot for the presentation.
+```{r out.width = '\\maxwidth'}
+damagePlot <-  qplot(damageMean, damageSD, size = damageSum, color = EVTYPE, data = unifiedDamage,
+                       xlab = "Mean",
+                       ylab= "Standard Deviation",
+                       main = "Mean/Sum distribution based on event types"
+                       )
+```
+
+##Results
+###Harm
+Here are the fifteen most harmful event types based on the mean harm:
+```{r}
+topMean <- arrange(healthCostMean, desc(average))
+topMean
+```
+
+Here are the fifteen most harmful event types based on the absolute number amount harm caused:
+
+```{r}
+topSum <- arrange(healthCostMean, desc(sum))
+topSum
+```
+
+The event type with the highest amount of harm in absolute number is clearly tornados. However they have a mean of just below 1 death or injury per occurance and standard deviation of 13. This is probably due to the fact that there are a lot of tornados and a lot of the time they may do little damage if they occur in rural areas. 
+
+The event type with the most harm in terms of a high mean is Hurrican/Typhoon, it is however also very variable with a standard deviation of about 90. 
+
+Here is a chart of the types of events, average, standard deviation, size in one plot.
+```{r out.width = '\\maxwidth'}
+healthPlot
+```
+
+This information seems to indicate that the most effective way of reducing the harm would be to focus on reducing the harm from tornados and hurricanes/typhoons, actions that adress these events would likely overlap so you could to a certain extent reduce both at the same time, if you had to choose one then it would probably be better to go for measures against tornados but the consequences could be severe if you experience a year with a lot of hurricanes/typhoons or if one hits in a densely populated area. I can imagine that an increase in hurricanes/typhoons could be a likley consequence of global warming in a lot of areas but do not have any data to prove it so it is only to be considered an untested hypothesis at this point.
+
+###Economic cost
+
+Here is the economic cost in the absolute value:
+```{r}
+unifiedDamage
+```
+
+Here is the economic cost ranked by the mean value:
+```{r}
+unifiedDamageMean <- unifiedDamage %>% arrange(desc(damageMean))
+unifiedDamageMean
+```
+
+Here is a plot similar to that used when examining the harm:
+```{r out.width = '\\maxwidth'}
+damagePlot
+```
+
+Again, the results here seem to indicate that any measures taken to prevent damage in cases of hurricanes/typhoons, tornados, storms etc. I would argue that these measures would be the best to implement because any action taken to reduce the economic cost of a hurricane will also be effective against a storm, tornado, tropical storm etc. 
+
+A key thing here is to consider flooding as well as storm surges, these are also likely related to the measures taken against the weather related events mentioned in the preceding paragraph. 
